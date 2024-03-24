@@ -1,15 +1,14 @@
+import streamlit as st
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-from geopy.distance import geodesic
-from geopy.geocoders import Nominatim
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import LabelEncoder
-import streamlit as st
 
-def recommend_supplier(user_budget, user_location, user_raw_material):
+def recommend_supplier(user_budget, user_location, user_raw_materials):
+    # Arbitrary data generation for suppliers
     np.random.seed(0)
 
+    # Generate supplier data
     num_suppliers = 1000
     num_raw_materials = 5
     supplier_cost = np.random.randint(50, 200, num_suppliers)
@@ -26,128 +25,76 @@ def recommend_supplier(user_budget, user_location, user_raw_material):
         'Raw_Material': np.random.choice(raw_materials, size=num_suppliers)
     })
 
+    # Encoding raw material
     label_encoder = LabelEncoder()
     supplier_data['Raw_Material_Encoded'] = label_encoder.fit_transform(supplier_data['Raw_Material'])
 
+    # Perform KMeans clustering
     X_supplier = supplier_data[['Cost', 'Latitude', 'Longitude', 'Raw_Material_Encoded']]
     kmeans = KMeans(n_clusters=5, random_state=0)
     supplier_data['Cluster'] = kmeans.fit_predict(X_supplier)
 
-    user_input_raw_material_encoded = label_encoder.transform([user_raw_material])[0]
+    # Encode raw materials in user input
+    user_input_raw_materials_encoded = label_encoder.transform(user_raw_materials)
 
-    user_input = pd.DataFrame({'Cost': [user_budget],
-                               'Latitude': [user_location['Latitude']],
-                               'Longitude': [user_location['Longitude']],
-                               'Raw_Material': [user_raw_material],
-                               'Raw_Material_Encoded': [user_input_raw_material_encoded]})
+    # User input DataFrame including raw materials
+    user_input = pd.DataFrame({'Cost': [user_budget] * len(user_raw_materials),
+                               'Latitude': [user_location['Latitude']] * len(user_raw_materials),
+                               'Longitude': [user_location['Longitude']] * len(user_raw_materials),
+                               'Raw_Material': user_raw_materials,
+                               'Raw_Material_Encoded': user_input_raw_materials_encoded})
 
-    user_cluster = kmeans.predict(user_input[['Cost', 'Latitude', 'Longitude', 'Raw_Material_Encoded']])[0]
+    # Predict clusters for user input
+    user_clusters = kmeans.predict(user_input[['Cost', 'Latitude', 'Longitude', 'Raw_Material_Encoded']])
 
-    cluster_material_suppliers = supplier_data[(supplier_data['Cluster'] == user_cluster) & (supplier_data['Raw_Material'] == user_raw_material)]
+    recommended_suppliers = []
 
-    if not cluster_material_suppliers.empty:
-        recommended_supplier = cluster_material_suppliers.sample(1)
-        return recommended_supplier[['Supplier', 'Latitude', 'Longitude', 'Raw_Material']].values.tolist()[0]
-    else:
-        return "No suppliers found matching the provided criteria."
+    for cluster, raw_material in zip(user_clusters, user_raw_materials):
+        # Filter suppliers belonging to the same cluster and having the required raw material
+        cluster_material_suppliers = supplier_data[(supplier_data['Cluster'] == cluster) & (supplier_data['Raw_Material'] == raw_material)]
+        
+        if not cluster_material_suppliers.empty:
+            recommended_supplier = cluster_material_suppliers.sample(1)
+            recommended_suppliers.append(recommended_supplier[['Supplier', 'Latitude', 'Longitude', 'Raw_Material']].values.tolist()[0])
+        else:
+            recommended_suppliers.append("No suppliers found matching the provided criteria for {}".format(raw_material))
 
-def get_valid_float_input(prompt, key):
-    while True:
-        try:
-            value = float(st.text_input(prompt, key=key))  # Added 'key' argument
-            return value
-        except ValueError:
-            st.error("Please enter a valid number.")
+    return recommended_suppliers
 
 def main():
-    st.title("Larsen&Toubro")
+    st.title('Supplier Recommendation App')
+    
+    # Divide the page into two columns
+    col1, col2 = st.columns([3, 2])
 
-    user_budget = get_valid_float_input("Enter your budget:", "budget")  # Added 'key' argument
-    user_latitude = get_valid_float_input("Enter your latitude:", "latitude")  # Added 'key' argument
-    user_longitude = get_valid_float_input("Enter your longitude:", "longitude")  # Added 'key' argument
-    user_raw_material = st.text_input("Enter your desired raw material:", key="raw_material")  # Added 'key' argument
+    # Input window on the left column
+    with col1:
+        user_budget = st.number_input("Enter your budget:", min_value=0.0, step=1.0)
+        user_latitude = st.number_input("Enter your latitude:", min_value=-90.0, max_value=90.0)
+        user_longitude = st.number_input("Enter your longitude:", min_value=-180.0, max_value=180.0)
+        user_raw_materials = st.text_input("Enter your desired raw materials separated by commas:")
+        if st.button("Recommend"):
+            # User location dictionary
+            user_location = {'Latitude': user_latitude, 'Longitude': user_longitude}
 
-    user_location = {'Latitude': user_latitude, 'Longitude': user_longitude}
+            # Split user_raw_materials into list
+            user_raw_materials = [material.strip() for material in user_raw_materials.split(',')]
 
-    recommended_supplier_data = recommend_supplier(user_budget, user_location, user_raw_material)
+            # Recommend suppliers based on user input
+            recommended_suppliers_data = recommend_supplier(user_budget, user_location, user_raw_materials)
 
-    if isinstance(recommended_supplier_data, str):
-        st.error(recommended_supplier_data)
-    else:
-        st.subheader("Recommended Supplier Data:")
-        st.write("Supplier:", recommended_supplier_data[0])
-        st.write("Latitude:", recommended_supplier_data[1])
-        st.write("Longitude:", recommended_supplier_data[2])
-        st.write("Raw Material:", recommended_supplier_data[3])
+    # Output window on the right column
+    with col2:
+        if 'recommended_suppliers_data' in locals():
+            for data in recommended_suppliers_data:
+                if isinstance(data, str):
+                    st.write(data)
+                else:
+                    st.write("Recommended Supplier Data:")
+                    st.write("Supplier:", data[0])
+                    st.write("Latitude:", data[1])
+                    st.write("Longitude:", data[2])
+                    st.write("Raw Material:", data[3])
 
-        geolocator = Nominatim(user_agent="my_geocoder")
-        start_lat, start_lon = recommended_supplier_data[1], recommended_supplier_data[2] 
-        end_lat, end_lon = user_latitude, user_longitude  
-
-        total_distance_km = geodesic((start_lat, start_lon), (end_lat, end_lon)).kilometers
-
-        if total_distance_km < 0.04:  
-            num_stops = 0
-        elif total_distance_km < 0.075: 
-            num_stops = 1
-        elif total_distance_km < 0.4:
-            num_stops = 4
-        elif total_distance_km < 1: 
-            num_stops = 6
-        elif total_distance_km < 3:
-            num_stops = int(total_distance_km / 250) 
-        else :
-            num_stops = int(total_distance_km/ 1000)
-
-        lat_step = (end_lat - start_lat) / (num_stops + 1)
-        lon_step = (end_lon - start_lon) / (num_stops + 1)
-
-        lats = [start_lat]
-        lons = [start_lon]
-        locations = []
-
-        for i in range(1, num_stops + 1):
-            current_lat = start_lat + i * lat_step
-            current_lon = start_lon + i * lon_step
-
-            lats.append(current_lat)
-            lons.append(current_lon)
-
-            location = geolocator.reverse((current_lat, current_lon), exactly_one=True)
-            if location:
-                locations.append(location.address)
-
-        lats.append(end_lat)
-        lons.append(end_lon)
-        destination = geolocator.reverse((end_lat, end_lon), exactly_one=True)
-        if destination:
-            locations.append(destination.address)
-
-        st.subheader("Route Information:")
-        st.write("Number of Stops:", num_stops)
-
-        for i, location in enumerate(locations):
-            st.write(f"Stop {i+1}: {location}")
-
-        fig = go.Figure()
-        fig.add_trace(go.Scattergeo(
-            mode="lines+markers",
-            lon=lons,
-            lat=lats,
-            marker={'size': 10}))
-
-        for lat, lon, loc in zip(lats, lons, locations):
-            fig.add_trace(go.Scattergeo(
-                mode="markers+text",
-                lon=[lon],
-                lat=[lat],
-                text=[loc],
-                marker={'size': 10},
-                textposition="bottom right"))
-
-        st.subheader("Route Map:")
-        st.plotly_chart(fig)
-
-if __name__ == "__main__":
-
+if _name_ == "_main_":
     main()
