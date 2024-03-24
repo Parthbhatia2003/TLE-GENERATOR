@@ -148,5 +148,6 @@ def main():
         st.subheader("Route Map:")
         st.plotly_chart(fig)
 
-if _name_ == "_main_":
+if __name__ == "__main__":
+
     main()
